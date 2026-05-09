@@ -1,0 +1,20 @@
+[TDPD_SERVICE]
+server = http://tdpd.makenv.com
+auth_server = https://auth-center.city.makenv.com
+# 注意使用自己的账号信息
+tdpd_user = your_username
+tdpd_pass = your_password
+
+[MIDDATA]
+# Middata参数组ID，用于计算中间结果时获取参数
+middata_group = 1
+
+# 同比系数计算配置
+[DMF_YOY]
+# 同比结果目标参数组ID（计算结果写入该组）
+target_group = 2
+
+# 环比系数计算配置
+[DMF_MOM]
+# 环比结果目标参数组ID（计算结果写入该组）
+target_group = 30
