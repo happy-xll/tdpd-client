@@ -3,6 +3,7 @@ import os
 import io
 import requests
 import pandas as pd
+import time
 from configparser import ConfigParser
 
 wolf_rbac_token = ''
@@ -47,27 +48,102 @@ def get_user_info():
     authorized()  # 确保已登录
     return wolf_user_data
 
-def authorized_post(url, data):
-    TDPD_SERVER = _get_config('TDPD_SERVICE', 'server')
-    wolf_rbac_token = authorized()
-    headers = {
-        'x-rbac-token': wolf_rbac_token
-    }
-    url = '{}/{}'.format(TDPD_SERVER, url)
-    r = requests.post(url, json=data, headers=headers)
-    print(r.text)
 
-    d = json.loads(r.text)
-    return d
-
-
-def authorized_patch(url, data):
+def _retry_request(request_func, url, max_retries=3, return_text=False, **kwargs):
     """
-    发送 PATCH 请求（带鉴权）
+    通用的HTTP请求重试辅助函数
 
     Args:
-        url: 请求的 URL 路径（如：v1/param/8812/values）
+        request_func: requests 方法 (requests.get/post/put/patch)
+        url: 完整的 URL
+        max_retries: 最大重试次数（默认 3）
+        return_text: 是否返回原始文本而非解析后的 JSON（默认 False）
+        **kwargs: 传递给 request_func 的其他参数
+
+    Returns:
+        dict 或 str: 根据 return_text 返回解析后的 JSON 数据或原始文本
+
+    Raises:
+        Exception: 重试失败后抛出异常
+    """
+    for attempt in range(max_retries):
+        try:
+            r = request_func(url, **kwargs)
+
+            # 对于 GET 请求，打印响应；其他请求在调用处打印
+            if request_func == requests.get:
+                print(r.text)
+
+            # 检查响应是否为空
+            if not r.text or r.text.strip() == '':
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    print(f"响应为空，{wait_time}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise Exception(f"API 返回空响应，已重试 {max_retries} 次")
+
+            if return_text:
+                return r.text
+            else:
+                return json.loads(r.text)
+
+        except json.JSONDecodeError as e:
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2
+                print(f"JSON 解析失败: {e}，{wait_time}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise Exception(f"JSON 解析失败，已重试 {max_retries} 次: {e}")
+        except requests.RequestException as e:
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2
+                print(f"请求失败: {e}，{wait_time}秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise Exception(f"请求失败，已重试 {max_retries} 次: {e}")
+
+
+def authorized_post(url, data, max_retries=3):
+    """
+    发送 POST 请求（带鉴权），支持自动重试
+
+    Args:
+        url: 请求的 URL 路径
         data: 请求数据
+        max_retries: 最大重试次数（默认 3）
+
+    Returns:
+        dict: 返回的 JSON 数据
+    """
+    TDPD_SERVER = _get_config('TDPD_SERVICE', 'server')
+    wolf_rbac_token = authorized()
+    headers = {'x-rbac-token': wolf_rbac_token}
+    full_url = '{}/{}'.format(TDPD_SERVER, url)
+
+    result = _retry_request(
+        requests.post,
+        full_url,
+        max_retries=max_retries,
+        json=data,
+        headers=headers,
+        timeout=60
+    )
+    print(result)  # 保持原有输出习惯
+    return result
+
+
+def authorized_patch(url, data, max_retries=3):
+    """
+    发送 PATCH 请求（带鉴权），支持自动重试
+
+    Args:
+        url: 请求的 URL 路径
+        data: 请求数据
+        max_retries: 最大重试次数（默认 3）
 
     Returns:
         dict: 返回的 JSON 数据
@@ -82,19 +158,25 @@ def authorized_patch(url, data):
     print(f"PATCH URL: {full_url}")
     print(f"PATCH Data: {json.dumps(data, ensure_ascii=False, indent=2)}")
 
-    r = requests.patch(full_url, json=data, headers=headers)
-    print(f"Response: {r.text}")
+    result = _retry_request(
+        requests.patch,
+        full_url,
+        max_retries=max_retries,
+        json=data,
+        headers=headers,
+        timeout=60
+    )
+    print(f"Response: {result}")
+    return result
 
-    d = json.loads(r.text)
-    return d
-
-def authorized_put(url, data):
+def authorized_put(url, data, max_retries=3):
     """
-    发送 PUT 请求（带鉴权）
+    发送 PUT 请求（带鉴权），支持自动重试
 
     Args:
-        url: 请求的 URL 路径（如：v1/param/8812/values）
+        url: 请求的 URL 路径
         data: 请求数据
+        max_retries: 最大重试次数（默认 3）
 
     Returns:
         dict: 返回的 JSON 数据
@@ -109,11 +191,16 @@ def authorized_put(url, data):
     print(f"PUT URL: {full_url}")
     print(f"PUT Data: {json.dumps(data, ensure_ascii=False, indent=2)}")
 
-    r = requests.put(full_url, json=data, headers=headers)
-    print(f"Response: {r.text}")
-
-    d = json.loads(r.text)
-    return d
+    result = _retry_request(
+        requests.put,
+        full_url,
+        max_retries=max_retries,
+        json=data,
+        headers=headers,
+        timeout=60
+    )
+    print(f"Response: {result}")
+    return result
 
 
 def upload_param_values(df, param_name):
@@ -169,21 +256,32 @@ def upload_param_values(df, param_name):
         print(f"上传失败: {e}")
 
 
-def authorized_get(url, rtype='dict'):
+def authorized_get(url, rtype='dict', max_retries=3):
+    """
+    发送 GET 请求到 TDPD API，支持自动重试
+
+    Args:
+        url: 请求 URL（相对路径）
+        rtype: 返回类型 ('dict' 或 'json')
+        max_retries: 最大重试次数（默认 3）
+
+    Returns:
+        根据 rtype 返回解析后的数据
+    """
     TDPD_SERVER = _get_config('TDPD_SERVICE', 'server')
     wolf_rbac_token = authorized()
-    headers = {
-        'x-rbac-token': wolf_rbac_token
-    }
-    url = '{}/{}'.format(TDPD_SERVER, url)
-    print(url)
-    r = requests.get(url, headers=headers)
-    print(r.text)
-    if rtype == 'dict':
-        d = json.loads(r.text)
-        return d
-    else:
-        return r.text
+    headers = {'x-rbac-token': wolf_rbac_token}
+    full_url = '{}/{}'.format(TDPD_SERVER, url)
+    print(full_url)
+
+    return _retry_request(
+        requests.get,
+        full_url,
+        max_retries=max_retries,
+        return_text=(rtype != 'dict'),
+        headers=headers,
+        timeout=30
+    )
 
 def load_sheet_data(param_id):
     djson = authorized_get('v1/param/{}/values?only_data=1'.format(param_id), 'json')
